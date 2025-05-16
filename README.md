@@ -26,8 +26,20 @@ Chúng ta cần đảm bảo router:
 - Mục đích: 
 Khởi tạo router với địa chỉ và thời gian gửi DV định kỳ.
 - Công việc chính:
-Thiết lập bảng định tuyến ban đầu (chỉ biết về chính mình với cost = 0).
-Khởi tạo các bảng hỗ trợ như: forwarding table, bảng hàng xóm, ...
++ Thiết lập bảng định tuyến ban đầu (chỉ biết về chính mình với cost = 0).
+
+Router.__init__(self, addr)  
+        self.heartbeat_time = heartbeat_time
+        self.last_time = 0
+        
++ Khởi tạo các bảng hỗ trợ như: forwarding table, bảng hàng xóm, ...
+
+self.distance_vector = defaultdict(lambda: float('inf'))  # Distance to each router
+        self.distance_vector[addr] = 0  # Distance to self is 0
+        self.forwarding_table = {}
+        self.neighbor_vectors = {}  # addr -> vector
+        self.neighbor_costs = {}    # port -> (neighbor, cost)
+        self.port_to_neighbor = {}  # port -> neighbor
 
 # handle_new_link(self, port, endpoint, cost)
 - Mục đích: 
