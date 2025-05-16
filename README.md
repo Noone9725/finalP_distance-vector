@@ -23,77 +23,156 @@ Chúng ta cần đảm bảo router:
 
 ## Các method:
 # __init__(self, addr, heartbeat_time)
-- Mục đích: 
+- Mục đích:
 Khởi tạo router với địa chỉ và thời gian gửi DV định kỳ.
 - Công việc chính:
-+ Thiết lập bảng định tuyến ban đầu (chỉ biết về chính mình với cost = 0).
-
-Router.__init__(self, addr)  
++ Gọi hàm khởi tạo của lớp cha Router:
+        Router.__init__(self, addr)
++ Lưu thời gian gửi định kỳ DV:
         self.heartbeat_time = heartbeat_time
-        self.last_time = 0
-        
-+ Khởi tạo các bảng hỗ trợ như: forwarding table, bảng hàng xóm, ...
-
-self.distance_vector = defaultdict(lambda: float('inf'))  # Distance to each router
-        self.distance_vector[addr] = 0  # Distance to self is 0
++ Khởi tạo distance_vector với mặc định vô cực:
+        self.distance_vector = defaultdict(lambda: float('inf'))
++ Đặt khoảng cách tới chính mình là 0:
+        self.distance_vector[addr] = 0
++ Khởi tạo bảng định tuyến:
         self.forwarding_table = {}
-        self.neighbor_vectors = {}  # addr -> vector
-        self.neighbor_costs = {}    # port -> (neighbor, cost)
-        self.port_to_neighbor = {}  # port -> neighbor
++ Các bảng phụ trợ khác để lưu thông tin hàng xóm:
+        self.neighbor_vectors = {}
+        self.neighbor_costs = {}
+        self.port_to_neighbor = {}
 
 # handle_new_link(self, port, endpoint, cost)
 - Mục đích: 
 Xử lý khi phát hiện kết nối mới (link mới đến router hàng xóm).
 - Công việc chính:
-Cập nhật thông tin hàng xóm mới.
-Ghi nhận chi phí kết nối trực tiếp đến hàng xóm đó.
-Cập nhật bảng định tuyến hiện tại (DV).
-Gửi (broadcast) lại DV của mình cho hàng xóm.
++ Ghi nhận thông tin hàng xóm mới:
+        self.port_to_neighbor[port] = endpoint
++ Lưu chi phí đến hàng xóm:
+        self.neighbor_costs[endpoint] = cost
++ Thêm hàng xóm vào DV (vì là link trực tiếp):
+        self.distance_vector[endpoint] = cost
++ Thiết lập next hop là chính hàng xóm đó:
+        self.forwarding_table[endpoint] = endpoint
++ Gửi DV mới của mình cho hàng xóm:
+        self.broadcast_distance_vector()
 
 # handle_remove_link(self, port)
 - Mục đích:
 Xử lý khi một link bị ngắt.
 - Công việc chính:
-Xóa thông tin liên quan đến hàng xóm bị mất khỏi tất cả bảng liên quan.
-Tính lại bảng định tuyến của mình.
-Gửi lại DV nếu có thay đổi.
++ Tìm địa chỉ hàng xóm tương ứng với port:
+        neighbor = self.port_to_neighbor.get(port)
++ Xóa thông tin liên quan đến hàng xóm bị mất khỏi tất cả bảng liên quan:
+        del self.port_to_neighbor[port]  
+        del self.neighbor_costs[neighbor]  
+        del self.neighbor_vectors[neighbor]
++ Tính lại bảng định tuyến (sau khi mất một hàng xóm):
+        updated = self.recompute_routing_table()
++ Gửi DV nếu có thay đổi:
+        if updated: self.broadcast_distance_vector()
 
 # handle_packet(self, port, packet)
 - Mục đích: 
 Xử lý khi nhận một gói tin trên một cổng.
-- Gồm 2 trường hợp:
-+ Gói Traceroute (data packet):
-Dùng forwarding_table để gửi gói đi qua "next hop".
-+ Gói Routing (gói mang distance vector):
-Giải mã packet.content để lấy DV của hàng xóm gửi đến.
-Lưu lại DV hàng xóm.
-Gọi recompute_routing_table() để tính lại DV của mình.
-Nếu có thay đổi, gửi (broadcast) lại DV.
+Gồm 2 trường hợp:
+- Gói Traceroute (data packet):
+Dùng forwarding_table để gửi gói đi qua "next hop":
+        dst = packet.dst_addr
+            if dst in self.forwarding_table:
+                next_hop = self.forwarding_table[dst]
+                for p, n in self.port_to_neighbor.items():
+                    if n == next_hop:
+                        self.send(p, packet)
+                        break
+- Gói Routing (gói mang distance vector):
++ Giải mã packet.content để lấy DV của hàng xóm gửi đến:
+        vector = json.loads(packet.content)
++ Lưu DV của hàng xóm vào bảng phụ:
+        self.neighbor_vectors[sender] = vector
++ Gọi recompute_routing_table() để tính lại DV của mình:
+        updated = self.recompute_routing_table()
++ Nếu có thay đổi, gửi (broadcast) lại DV:
+        if updated: self.broadcast_distance_vector()
 
 # handle_time(self, time_ms)
 - Mục đích: 
 Hàm xử lý định kỳ theo thời gian (tính bằng millisecond).
 - Công việc chính:
-Nếu đã đủ heartbeat_time kể từ lần cuối gửi:
-Gửi lại bảng định tuyến hiện tại của mình đến các hàng xóm (broadcast DV).
++ Kiểm tra đã đến thời điểm gửi DV chưa:
+        if time_ms - self.last_time >= self.heartbeat_time:
++ Cập nhật lại thời gian:
+        self.last_time = time_ms
++ Gửi DV hiện tại cho hàng xóm (Nếu đã đủ heartbeat_time kể từ lần cuối gửi):
+        self.broadcast_distance_vector()
 
 # broadcast_distance_vector(self)
 - Mục đích: 
 Gửi bảng định tuyến (distance vector) của mình tới tất cả hàng xóm.
-
 - Công việc chính:
-Chuyển distance_vector sang dạng JSON.
-Tạo Packet.ROUTING cho mỗi hàng xóm và gửi qua cổng tương ứng.
++ Chuyển DV sang JSON:
+        content = json.dumps(dict(self.distance_vector))
++ Tạo Packet.ROUTING cho mỗi hàng xóm và gửi qua cổng tương ứng:
+        for port in self.links:
+            neighbor = self.links[port].e2
+            packet = Packet(Packet.ROUTING, self.addr, neighbor, content)
+            self.send(port, packet)
 
 # recompute_routing_table(self)
 - Mục đích:
 Tính lại bảng định tuyến dựa trên DV của hàng xóm và link trực tiếp.
-
 - Nguyên lý: Dựa trên thuật toán Bellman-Ford:
-Với mỗi đích D, xét tất cả các hàng xóm N.
-Tính tổng chi phí cost = cost_to_N + N[D].
-Nếu có route tốt hơn, cập nhật DV và forwarding table.
-Trả về True nếu có thay đổi, ngược lại False.
+- Công việc chính:
+
+Khởi tạo bảng tạm thời:
++ Khởi tạo biến updated để kiểm tra có thay đổi gì không:
+        updated = False
++ Tạo bảng distance_vector mới với giá trị mặc định là vô cực:
+        new_dv = defaultdict(lambda: float('inf'))
++ Đặt khoảng cách tới chính mình là 0:
+        new_dv[self.addr] = 0
++ Khởi tạo bảng định tuyến mới (forwarding table):
+        new_ft = {}
+  
+Thu thập tất cả các đích có thể:
++ Tập hợp tất cả địa chỉ đích từ DV hiện tại và DV của hàng xóm:
+        all_dests = set([self.addr]) | set(self.distance_vector.keys())  
+        for vec in self.neighbor_vectors.values():  
+            all_dests.update(vec.keys())
+
+Tính chi phí tối thiểu đến từng đích:
++ Bỏ qua chính router hiện tại (không cần tính đến chính mình):
+        if dest == self.addr: continue
++ Khởi tạo giá trị chi phí tối thiểu ban đầu:
+        min_cost = float('inf')
+        best_next_hop = None
++ Duyệt qua từng hàng xóm để tính chi phí đến dest thông qua họ:
+        for neighbor, cost_to_neighbor in self.neighbor_costs.items():
+                neighbor_vector = self.neighbor_vectors.get(neighbor, {})
+                cost_from_neighbor = neighbor_vector.get(dest, float('inf'))
+                total_cost = cost_to_neighbor + cost_from_neighbor
+                if total_cost < min_cost:
+                    min_cost = total_cost
+                    best_next_hop = neighbor
+
+So sánh với link trực tiếp (nếu có):
+        if dest in self.neighbor_costs and self.neighbor_costs[dest] < min_cost:
+                min_cost = self.neighbor_costs[dest]
+                best_next_hop = dest
+
+Cập nhật bảng DV và bảng định tuyến tạm:
++ Nếu tìm được đường đi đến dest, lưu kết quả vào bảng mới:
+        if min_cost < float('inf'):
+                new_dv[dest] = min_cost
+                new_ft[dest] = best_next_hop
+
+So sánh với bảng cũ và cập nhật nếu có thay đổi:
++ Nếu bảng DV mới khác với bảng hiện tại thì cập nhật lại:
+        if dict(new_dv) != dict(self.distance_vector):
+            self.distance_vector = new_dv
+            self.forwarding_table = new_ft
+            updated = True
+
+Trả về updated = True nếu có thay đổi, ngược lại False.
 
 # __repr__(self)
 - Mục đích: 
